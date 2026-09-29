@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>FullScreen</key>
+            <true/>
+            <key>Icon</key>
+            <data>
+iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAYAAAD/fkGFAAACBElEQVR4nO3SsQ1AUAAA0d9LtHYypC3VjKAgweUVr7/ixr5NB1SMtwPgSYYmxdCkGJoUQ5NiaFIMTcrl0Ou8wGcYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUm4PDX9iaFIMTYqhSTE0KYYmxdCkGJqUE1/2cHP/IUSpAAAAAElFTkT/z0re
+            </data>
+            <key>IsRemovable</key>
+            <true/>
+            <key>Label</key>
+            <string>Cellar POS</string>
+            <key>PayloadDescription</key>
+            <string>Installs the Cellar POS in-store retail till on your iOS device</string>
+            <key>PayloadDisplayName</key>
+            <string>Cellar POS Till</string>
+            <key>PayloadIdentifier</key>
+            <string>com.cellarpos.till.webclip</string>
+            <key>PayloadType</key>
+            <string>com.apple.webClip.managed</string>
+            <key>PayloadUUID</key>
+            <string>B6C3F1B0-9A24-4B4B-9E36-8E7B2F64C001</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>Precomposed</key>
+            <true/>
+            <key>URL</key>
+            <string>https://ais-dev-4tzssnswtwyamrzryb6jkm-978042510279.europe-west2.run.app</string>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>Installs the Cellar POS Wines &amp; Spirits retail till app on your iPhone or iPad.</string>
+    <key>PayloadDisplayName</key>
+    <string>Cellar POS Mobile App</string>
+    <key>PayloadIdentifier</key>
+    <string>com.cellarpos.till</string>
+    <key>PayloadOrganization</key>
+    <string>The Cellar Wines &amp; Spirits</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>E71822F0-45D3-4819-B5B9-F8436B690A02</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>

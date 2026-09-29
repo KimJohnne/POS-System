@@ -1,0 +1,6 @@
+{
+  "name": "Cellar POS — Wines & Spirits Till System",
+  "description": "Locally-installed, offline-first point-of-sale system for wines and spirits retail shops. Features inventory management, stock adjustments, cash & M-Pesa sales, digital receipts, and till reconciliation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
