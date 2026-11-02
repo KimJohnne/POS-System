@@ -29,7 +29,7 @@ interface SellScreenProps {
     reference?: string;
     cash_received?: number;
     change?: number;
-  }) => void;
+  }) => boolean;
 }
 
 export const SellScreen: React.FC<SellScreenProps> = ({
@@ -120,14 +120,24 @@ export const SellScreen: React.FC<SellScreenProps> = ({
       }
     }
 
-    // Complete sale
-    onCompleteSale({
+    if (paymentMethod === 'M-Pesa' && !/^[A-Z0-9-]{6,32}$/.test(mpesaReference.trim().toUpperCase())) {
+      setErrorMessage('Enter the confirmed M-Pesa reference (6–32 letters, digits or hyphens).');
+      return;
+    }
+
+    // Complete sale; retain entered payment details when persistence fails.
+    const succeeded = onCompleteSale({
       items: cart,
       payment_method: paymentMethod,
       reference: paymentMethod === 'M-Pesa' ? mpesaReference.trim().toUpperCase() : undefined,
       cash_received: paymentMethod === 'Cash' ? numCashTendered : undefined,
       change: paymentMethod === 'Cash' ? cashChange : undefined,
     });
+
+    if (!succeeded) {
+      setErrorMessage('Transaction was not saved. Check the error and try again.');
+      return;
+    }
 
     // Reset local checkout states
     setCashTendered('');
