@@ -840,336 +840,257 @@ const INITIAL_SALES: Sale[] = [
   },
 ];
 
+// All business records live in one snapshot. A single localStorage write is atomic
+// at the key level; this prevents partially written sales, stock and receipts.
+// It does NOT provide cross-device synchronization or multi-tab locking.
+const SNAPSHOT_KEY = 'cellar_pos_snapshot_v3';
+interface Snapshot {
+  version: 3;
+  products: Product[];
+  adjustments: StockAdjustment[];
+  sales: Sale[];
+  settings: Settings;
+}
+function parseStored<T>(key: string): T | undefined {
+  const value = localStorage.getItem(key);
+  return value === null ? undefined : JSON.parse(value) as T;
+}
+function nextReceiptNumber(sales: Sale[], candidate = 1001): number {
+  return Math.max(candidate, 1001, ...sales.map(s => Number.isSafeInteger(s.receipt_no) ? s.receipt_no + 1 : 1001));
+}
+function readSnapshot(): Snapshot {
+  const snapshot = parseStored<Snapshot>(SNAPSHOT_KEY);
+  if (snapshot) {
+    if (snapshot.version !== 3 || !Array.isArray(snapshot.products) ||
+        !Array.isArray(snapshot.sales) || !Array.isArray(snapshot.adjustments) ||
+        !snapshot.settings) throw new Error('POS database is invalid. Restore a verified backup.');
+    return snapshot;
+  }
+  // Import all pre-v3 records without overwriting real sales with demo records.
+  const products = parseStored<Product[]>(STORAGE_KEYS.PRODUCTS);
+  const sales = parseStored<Sale[]>(STORAGE_KEYS.SALES);
+  const adjustments = parseStored<StockAdjustment[]>(STORAGE_KEYS.ADJUSTMENTS);
+  const settings = parseStored<Settings>(STORAGE_KEYS.SETTINGS);
+  const hasLegacy = [products, sales, adjustments, settings].some(x => x !== undefined);
+  if ((products && !Array.isArray(products)) || (sales && !Array.isArray(sales)) ||
+      (adjustments && !Array.isArray(adjustments))) throw new Error('Legacy POS data is malformed.');
+  const chosenSales = sales ?? (hasLegacy ? [] : INITIAL_SALES);
+  return {
+    version: 3,
+    products: products ?? (hasLegacy ? [] : INITIAL_PRODUCTS),
+    sales: chosenSales,
+    adjustments: adjustments ?? (hasLegacy ? [] : INITIAL_ADJUSTMENTS),
+    settings: { ...DEFAULT_SETTINGS, ...(settings ?? {}), next_receipt_no: nextReceiptNumber(chosenSales, settings?.next_receipt_no) },
+  };
+}
+function commit(snapshot: Snapshot): void {
+  // Throws on quota, permissions, or serialization failure; caller must not report success.
+  localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
+}
+function assertPositiveInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(label + ' must be a positive integer.');
+}
+function assertNonNegativeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(label + ' must be a non-negative integer.');
+}
+function assertValidProduct(p: Product): void {
+  if (!p || typeof p.id !== 'string' || !p.id || typeof p.name !== 'string' || !p.name.trim() ||
+      typeof p.category !== 'string' || !p.category.trim()) throw new Error('Invalid product identity.');
+  assertPositiveInteger(p.price, 'Price');
+  assertNonNegativeInteger(p.qty, 'Stock');
+  if (p.low_stock_threshold != null) assertNonNegativeInteger(p.low_stock_threshold, 'Low-stock threshold');
+}
 export function initStorage(): void {
-  try {
-    const initialized = localStorage.getItem(STORAGE_KEYS.INITIALIZED);
-    if (!initialized) {
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(INITIAL_PRODUCTS));
-      localStorage.setItem(STORAGE_KEYS.ADJUSTMENTS, JSON.stringify(INITIAL_ADJUSTMENTS));
-      localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(INITIAL_SALES));
-      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify({
-        ...DEFAULT_SETTINGS,
-        next_receipt_no: 1004,
-      }));
-      localStorage.setItem(STORAGE_KEYS.INITIALIZED, 'v2');
-    } else if (initialized !== 'v2') {
-      // Auto-migrate to populate multi-day weekly sales for the chart
-      const existingSalesStr = localStorage.getItem(STORAGE_KEYS.SALES);
-      const existingSales = existingSalesStr ? JSON.parse(existingSalesStr) : [];
-      if (existingSales.length <= 3) {
-        localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(INITIAL_SALES));
-      }
-      localStorage.setItem(STORAGE_KEYS.INITIALIZED, 'v2');
-    }
-  } catch (err) {
-    console.error('Failed to initialize storage:', err);
-  }
+  const snapshot = readSnapshot();
+  // Validate before writing the upgraded snapshot. Never silently reset corrupted data.
+  snapshot.products.forEach(assertValidProduct);
+  commit(snapshot);
 }
-
-export function getProducts(): Product[] {
-  try {
-    const data = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
-    return data ? JSON.parse(data) : INITIAL_PRODUCTS;
-  } catch {
-    return INITIAL_PRODUCTS;
-  }
-}
-
+export function getProducts(): Product[] { return readSnapshot().products; }
 export function saveProducts(products: Product[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
-  } catch (err) {
-    console.error('Failed to save products:', err);
-  }
+  products.forEach(assertValidProduct);
+  const state = readSnapshot();
+  commit({ ...state, products });
 }
-
-export function getStockAdjustments(): StockAdjustment[] {
-  try {
-    const data = localStorage.getItem(STORAGE_KEYS.ADJUSTMENTS);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-}
-
+export function getStockAdjustments(): StockAdjustment[] { return readSnapshot().adjustments; }
 export function recordStockAdjustment(adj: Omit<StockAdjustment, 'id' | 'created_at'>): StockAdjustment {
-  const adjustments = getStockAdjustments();
-  const products = getProducts();
-  const productIndex = products.findIndex(p => p.id === adj.product_id);
-
-  if (productIndex === -1) {
-    throw new Error('Product not found for adjustment');
+  const state = readSnapshot();
+  if (!Number.isSafeInteger(adj.delta) || adj.delta === 0) throw new Error('Stock adjustment must be a non-zero integer.');
+  const index = state.products.findIndex(p => p.id === adj.product_id);
+  if (index < 0) throw new Error('Product not found for adjustment.');
+  const product = state.products[index];
+  const newQty = product.qty + adj.delta;
+  if (!Number.isSafeInteger(newQty) || newQty < 0) throw new Error('Insufficient stock for adjustment.');
+  const created_at = new Date().toISOString();
+  const event: StockAdjustment = { ...adj, product_name: product.name, id: crypto.randomUUID(), created_at };
+  const products = state.products.map((p, i) => i === index ? { ...p, qty: newQty, updated_at: created_at } : p);
+  commit({ ...state, products, adjustments: [event, ...state.adjustments] });
+  return event;
+}
+// Product edits and stock corrections are committed together, so quantity cannot
+// change without an audit event.
+export function saveCatalogProduct(product: Product): void {
+  assertValidProduct(product);
+  const state = readSnapshot();
+  const previous = state.products.find(p => p.id === product.id);
+  if (!previous) {
+    if (state.products.some(p => p.id === product.id)) throw new Error('Duplicate product ID.');
+    const created_at = new Date().toISOString();
+    const event: StockAdjustment = {
+      id: crypto.randomUUID(), product_id: product.id, product_name: product.name,
+      delta: product.qty, reason: 'Restock', notes: 'Opening quantity on product creation', created_at,
+    };
+    commit({ ...state, products: [product, ...state.products], adjustments: product.qty ? [event, ...state.adjustments] : state.adjustments });
+    return;
   }
-
-  // Update product stock on hand
-  const currentQty = products[productIndex].qty;
-  const newQty = Math.max(0, currentQty + adj.delta); // prevent negative stock
-  products[productIndex] = {
-    ...products[productIndex],
-    qty: newQty,
-    updated_at: new Date().toISOString(),
-  };
-
-  const newAdjustment: StockAdjustment = {
-    ...adj,
-    id: `adj-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+  const difference = product.qty - previous.qty;
+  const adjustments = difference ? [{
+    id: crypto.randomUUID(), product_id: product.id, product_name: product.name,
+    delta: difference, reason: 'Correction' as const, notes: 'Product quantity edited in catalogue',
     created_at: new Date().toISOString(),
-  };
-
-  adjustments.unshift(newAdjustment);
-  saveProducts(products);
-  localStorage.setItem(STORAGE_KEYS.ADJUSTMENTS, JSON.stringify(adjustments));
-  return newAdjustment;
+  }, ...state.adjustments] : state.adjustments;
+  commit({ ...state, products: state.products.map(p => p.id === product.id ? product : p), adjustments });
 }
-
-export function getSales(): Sale[] {
-  try {
-    const data = localStorage.getItem(STORAGE_KEYS.SALES);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function getSettings(): Settings {
-  try {
-    const data = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-    return data ? JSON.parse(data) : DEFAULT_SETTINGS;
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
-}
-
+export function getSales(): Sale[] { return readSnapshot().sales; }
+export function getSettings(): Settings { return readSnapshot().settings; }
 export function saveSettings(settings: Settings): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-  } catch (err) {
-    console.error('Failed to save settings:', err);
-  }
+  const state = readSnapshot();
+  // Don't allow UI edits to move receipt counter behind existing receipts.
+  commit({ ...state, settings: { ...settings, next_receipt_no: nextReceiptNumber(state.sales, settings.next_receipt_no) } });
 }
-
 export interface CompleteSalePayload {
-  items: {
-    product: Product;
-    qty: number;
-  }[];
+  items: { product: Product; qty: number }[];
   payment_method: 'Cash' | 'M-Pesa';
   reference?: string;
   cash_received?: number;
   change?: number;
 }
-
 export function completeSale(payload: CompleteSalePayload): Sale {
-  const products = getProducts();
-  const settings = getSettings();
-  const sales = getSales();
-
-  // Validate stock availability
-  for (const item of payload.items) {
-    const currentProd = products.find(p => p.id === item.product.id);
-    if (!currentProd) {
-      throw new Error(`Product ${item.product.name} not found`);
-    }
-    if (currentProd.qty < item.qty) {
-      throw new Error(`Insufficient stock for ${currentProd.name}. Available: ${currentProd.qty}`);
-    }
-  }
-
-  const receiptNo = settings.next_receipt_no || 1001;
-  const saleId = `sale-${receiptNo}-${Date.now()}`;
+  const state = readSnapshot();
+  if (!Array.isArray(payload.items) || payload.items.length === 0) throw new Error('Cart must not be empty.');
+  if (payload.payment_method !== 'Cash' && payload.payment_method !== 'M-Pesa') throw new Error('Unknown payment method.');
+  const seen = new Set<string>();
   let subtotal = 0;
-
-  const saleItems = payload.items.map((cartItem, idx) => {
-    const lineTotal = cartItem.product.price * cartItem.qty;
-    subtotal += lineTotal;
-
-    // Decrement stock in catalog
-    const prodIdx = products.findIndex(p => p.id === cartItem.product.id);
-    if (prodIdx !== -1) {
-      products[prodIdx].qty -= cartItem.qty;
-      products[prodIdx].updated_at = new Date().toISOString();
-    }
-
-    return {
-      id: `item-${receiptNo}-${idx + 1}`,
-      sale_id: saleId,
-      product_id: cartItem.product.id,
-      name: cartItem.product.name,
-      category: cartItem.product.category,
-      price: cartItem.product.price, // snapshot
-      qty: cartItem.qty,
-      line_total: lineTotal,
-    };
+  const saleId = crypto.randomUUID();
+  const receiptNo = nextReceiptNumber(state.sales, state.settings.next_receipt_no);
+  const updatedProducts = state.products.map(p => ({ ...p }));
+  const now = new Date().toISOString();
+  const items = payload.items.map((item, index) => {
+    const id = item?.product?.id;
+    if (!id || seen.has(id)) throw new Error('Invalid or duplicate cart product.');
+    seen.add(id);
+    assertPositiveInteger(item.qty, 'Sale quantity');
+    const product = updatedProducts.find(p => p.id === id);
+    if (!product) throw new Error('Product no longer exists.');
+    if (product.qty < item.qty) throw new Error('Insufficient stock for ' + product.name);
+    const line_total = product.price * item.qty;
+    if (!Number.isSafeInteger(line_total)) throw new Error('Sale amount exceeds supported range.');
+    subtotal += line_total;
+    product.qty -= item.qty;
+    product.updated_at = now;
+    return { id: crypto.randomUUID(), sale_id: saleId, product_id: id, name: product.name, category: product.category, price: product.price, qty: item.qty, line_total };
   });
-
-  const newSale: Sale = {
-    id: saleId,
-    receipt_no: receiptNo,
-    ts: new Date().toISOString(),
-    subtotal,
-    total: subtotal,
-    payment_method: payload.payment_method,
-    reference: payload.reference,
-    cash_received: payload.cash_received,
-    change: payload.change,
-    status: 'completed',
-    items: saleItems,
-  };
-
-  // Persist updated stock
-  saveProducts(products);
-
-  // Update sales log (newest first)
-  sales.unshift(newSale);
-  localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
-
-  // Increment sequential receipt number
-  settings.next_receipt_no = receiptNo + 1;
-  saveSettings(settings);
-
-  return newSale;
+  if (!Number.isSafeInteger(subtotal) || subtotal <= 0) throw new Error('Invalid sale total.');
+  let cash_received: number | undefined;
+  let change: number | undefined;
+  let reference: string | undefined;
+  if (payload.payment_method === 'Cash') {
+    cash_received = payload.cash_received;
+    if (cash_received === undefined || !Number.isSafeInteger(cash_received) || cash_received < subtotal) throw new Error('Insufficient cash received.');
+    change = cash_received - subtotal;
+  } else {
+    reference = payload.reference?.trim().toUpperCase();
+    if (!reference || !/^[A-Z0-9-]{6,32}$/.test(reference)) throw new Error('Enter a valid M-Pesa transaction reference.');
+    if (state.sales.some(s => s.payment_method === 'M-Pesa' && s.reference === reference && s.status === 'completed')) throw new Error('M-Pesa reference already recorded.');
+  }
+  const sale: Sale = { id: saleId, receipt_no: receiptNo, ts: now, subtotal, total: subtotal,
+    payment_method: payload.payment_method, reference, cash_received, change, status: 'completed', items };
+  commit({ ...state, products: updatedProducts, sales: [sale, ...state.sales],
+    settings: { ...state.settings, next_receipt_no: receiptNo + 1 } });
+  return sale;
 }
-
 export function voidSale(saleId: string, reason: string): Sale {
-  const sales = getSales();
-  const products = getProducts();
-  const settings = getSettings();
-
-  const originalSaleIdx = sales.findIndex(s => s.id === saleId);
-  if (originalSaleIdx === -1) {
-    throw new Error('Sale not found');
-  }
-
-  const originalSale = sales[originalSaleIdx];
-  if (originalSale.status === 'voided') {
-    throw new Error('This sale has already been voided');
-  }
-
-  const voidTimestamp = new Date().toISOString();
-
-  // 1. Restock items back into inventory
-  for (const item of originalSale.items) {
-    const pIdx = products.findIndex(p => p.id === item.product_id);
-    if (pIdx !== -1) {
-      products[pIdx].qty += item.qty;
-      products[pIdx].updated_at = voidTimestamp;
-    }
-  }
-  saveProducts(products);
-
-  // 2. Mark original sale as voided (preserving its original record and receipt number)
-  sales[originalSaleIdx] = {
-    ...originalSale,
-    status: 'voided',
-    void_reason: reason,
-    voided_at: voidTimestamp,
-  };
-
-  // 3. Create a linked reversing entry with its own unique sequential receipt number
-  const reversalReceiptNo = settings.next_receipt_no;
-  const reversalSaleId = `reversal-${reversalReceiptNo}-${Date.now()}`;
-
+  if (!reason?.trim()) throw new Error('Void reason is required.');
+  const state = readSnapshot();
+  const original = state.sales.find(s => s.id === saleId);
+  if (!original || original.status !== 'completed' || original.voided_sale_id) throw new Error('Sale cannot be voided.');
+  const now = new Date().toISOString();
+  const receiptNo = nextReceiptNumber(state.sales, state.settings.next_receipt_no);
+  const products = state.products.map(p => {
+    const delta = original.items.filter(i => i.product_id === p.id).reduce((n, i) => n + i.qty, 0);
+    return delta ? { ...p, qty: p.qty + delta, updated_at: now } : p;
+  });
+  const updatedOriginal: Sale = { ...original, status: 'voided', void_reason: reason.trim(), voided_at: now };
+  const reversalId = crypto.randomUUID();
   const reversingEntry: Sale = {
-    id: reversalSaleId,
-    receipt_no: reversalReceiptNo,
-    ts: voidTimestamp,
-    subtotal: -originalSale.subtotal,
-    total: -originalSale.total,
-    payment_method: originalSale.payment_method,
-    reference: originalSale.reference ? `REV-${originalSale.reference}` : undefined,
-    cash_received: originalSale.cash_received ? -originalSale.cash_received : undefined,
-    change: originalSale.change,
-    status: 'voided',
-    voided_sale_id: originalSale.id,
-    void_reason: reason,
-    voided_at: voidTimestamp,
-    items: originalSale.items.map(item => ({
-      ...item,
-      id: `rev-${item.id}`,
-      sale_id: reversalSaleId,
-      qty: -item.qty,
-      line_total: -item.line_total,
-    })),
+    id: reversalId, receipt_no: receiptNo, ts: now, subtotal: -original.subtotal, total: -original.total,
+    payment_method: original.payment_method, reference: original.reference ? 'REV-' + original.reference : undefined,
+    status: 'voided', voided_sale_id: original.id, void_reason: reason.trim(), voided_at: now,
+    items: original.items.map(i => ({ ...i, id: crypto.randomUUID(), sale_id: reversalId, qty: -i.qty, line_total: -i.line_total })),
   };
-
-  // Add reversal entry to sales log
-  sales.unshift(reversingEntry);
-  localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
-
-  // Increment sequential receipt number
-  settings.next_receipt_no = reversalReceiptNo + 1;
-  saveSettings(settings);
-
-  return sales[originalSaleIdx + 1]; // Return the updated original sale
+  commit({ ...state, products, sales: [reversingEntry, ...state.sales.map(s => s.id === saleId ? updatedOriginal : s)],
+    settings: { ...state.settings, next_receipt_no: receiptNo + 1 } });
+  return updatedOriginal;
 }
-
-// Backup & Restore
 export interface DatabaseExport {
-  app: string;
-  version: string;
-  exported_at: string;
-  products: Product[];
-  sales: Sale[];
-  adjustments: StockAdjustment[];
-  settings: Settings;
+  app: string; version: string; exported_at: string;
+  products: Product[]; sales: Sale[]; adjustments: StockAdjustment[]; settings: Settings;
 }
-
 export function exportDatabaseBackup(): void {
-  const data: DatabaseExport = {
-    app: 'Cellar POS',
-    version: '1.0',
-    exported_at: new Date().toISOString(),
-    products: getProducts(),
-    sales: getSales(),
-    adjustments: getStockAdjustments(),
-    settings: getSettings(),
-  };
-
-  const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(data, null, 2))}`;
-  const downloadAnchor = document.createElement('a');
-  const dateStr = new Date().toISOString().split('T')[0];
-  downloadAnchor.setAttribute('href', jsonString);
-  downloadAnchor.setAttribute('download', `cellar-pos-backup-${dateStr}.json`);
-  document.body.appendChild(downloadAnchor);
-  downloadAnchor.click();
-  downloadAnchor.remove();
+  const state = readSnapshot();
+  const data: DatabaseExport = { app: 'Cellar POS', version: '3.0', exported_at: new Date().toISOString(), ...state };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = 'cellar-pos-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(anchor); anchor.click(); anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-export function importDatabaseBackup(jsonString: string): { success: boolean; message: string } {
+export function importDatabaseBackup(input: string): { success: boolean; message: string } {
   try {
-    const parsed = JSON.parse(jsonString);
-    if (!parsed.products || !Array.isArray(parsed.products)) {
-      return { success: false, message: 'Invalid backup file: missing products table.' };
+    const data = JSON.parse(input);
+    if (!data || data.app !== 'Cellar POS' || !Array.isArray(data.products) ||
+        !Array.isArray(data.sales) || !Array.isArray(data.adjustments) || !data.settings)
+      throw new Error('Invalid backup format.');
+    data.products.forEach(assertValidProduct);
+    const productIds = new Set(data.products.map((p: Product) => p.id));
+    if (productIds.size !== data.products.length) throw new Error('Duplicate product IDs.');
+    const receipts = new Set<number>();
+    for (const sale of data.sales as Sale[]) {
+      if (!sale || !Number.isSafeInteger(sale.receipt_no) || receipts.has(sale.receipt_no) ||
+          !Array.isArray(sale.items) || !Number.isSafeInteger(sale.total) || !sale.id ||
+          !['completed', 'voided'].includes(sale.status) ||
+          !['Cash', 'M-Pesa'].includes(sale.payment_method))
+        throw new Error('Invalid or duplicate sales records.');
+      receipts.add(sale.receipt_no);
     }
-    if (!parsed.sales || !Array.isArray(parsed.sales)) {
-      return { success: false, message: 'Invalid backup file: missing sales table.' };
+    if (!Array.isArray(data.settings.categories) || typeof data.settings.shop_name !== 'string')
+      throw new Error('Invalid settings.');
+    for (const adjustment of data.adjustments as StockAdjustment[]) {
+      if (!adjustment || !Number.isSafeInteger(adjustment.delta) || !adjustment.product_id ||
+          !adjustment.id || typeof adjustment.reason !== 'string' ||
+          typeof adjustment.created_at !== 'string') throw new Error('Invalid stock adjustment record.');
     }
-
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(parsed.products));
-    localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(parsed.sales));
-    localStorage.setItem(STORAGE_KEYS.ADJUSTMENTS, JSON.stringify(parsed.adjustments || []));
-    if (parsed.settings) {
-      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed.settings));
+    for (const sale of data.sales as Sale[]) {
+      if (!Number.isSafeInteger(sale.subtotal) || !Number.isFinite(Date.parse(sale.ts)) ||
+          sale.items.some(i => !i || !i.id || !i.product_id || !Number.isSafeInteger(i.qty) ||
+            !Number.isSafeInteger(i.price) || !Number.isSafeInteger(i.line_total) ||
+            i.sale_id !== sale.id || i.line_total !== i.price * i.qty) ||
+          sale.items.reduce((sum, i) => sum + i.line_total, 0) !== sale.total)
+        throw new Error('Invalid sale amounts or line items.');
     }
-    localStorage.setItem(STORAGE_KEYS.INITIALIZED, 'true');
-
-    return {
-      success: true,
-      message: `Restored ${parsed.products.length} products and ${parsed.sales.length} sales records successfully.`,
-    };
+    const snapshot: Snapshot = { version: 3, products: data.products, sales: data.sales,
+      adjustments: data.adjustments,
+      settings: { ...DEFAULT_SETTINGS, ...data.settings,
+        next_receipt_no: nextReceiptNumber(data.sales, data.settings.next_receipt_no) } };
+    commit(snapshot);
+    return { success: true, message: 'Restored ' + snapshot.products.length + ' products and ' + snapshot.sales.length + ' sales.' };
   } catch (err) {
-    return { success: false, message: `Failed to restore backup: ${(err as Error).message}` };
+    return { success: false, message: 'Restore rejected; existing records unchanged. ' + (err as Error).message };
   }
 }
-
 export function resetToSampleData(): void {
-  localStorage.removeItem(STORAGE_KEYS.INITIALIZED);
-  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(INITIAL_PRODUCTS));
-  localStorage.setItem(STORAGE_KEYS.ADJUSTMENTS, JSON.stringify(INITIAL_ADJUSTMENTS));
-  localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(INITIAL_SALES));
-  localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify({
-    ...DEFAULT_SETTINGS,
-    next_receipt_no: 1004,
-  }));
-  localStorage.setItem(STORAGE_KEYS.INITIALIZED, 'true');
+  commit({ version: 3, products: INITIAL_PRODUCTS, adjustments: INITIAL_ADJUSTMENTS,
+    sales: INITIAL_SALES, settings: { ...DEFAULT_SETTINGS, next_receipt_no: nextReceiptNumber(INITIAL_SALES) } });
 }

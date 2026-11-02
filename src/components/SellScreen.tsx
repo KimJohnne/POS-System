@@ -29,7 +29,7 @@ interface SellScreenProps {
     reference?: string;
     cash_received?: number;
     change?: number;
-  }) => void;
+  }) => boolean;
 }
 
 export const SellScreen: React.FC<SellScreenProps> = ({
@@ -49,6 +49,7 @@ export const SellScreen: React.FC<SellScreenProps> = ({
   const [mpesaReference, setMpesaReference] = useState<string>('');
   const [isCartOpenMobile, setIsCartOpenMobile] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
 
   // Categories list including 'All'
   const categories = useMemo(() => {
@@ -120,8 +121,17 @@ export const SellScreen: React.FC<SellScreenProps> = ({
       }
     }
 
-    // Complete sale
-    onCompleteSale({
+    if (paymentMethod === 'M-Pesa' && !paymentConfirmed) {
+      setErrorMessage('Confirm receipt of the M-Pesa payment before recording this sale.');
+      return;
+    }
+    if (paymentMethod === 'M-Pesa' && !/^[A-Z0-9-]{6,32}$/.test(mpesaReference.trim().toUpperCase())) {
+      setErrorMessage('Enter the confirmed M-Pesa reference (6–32 letters, digits or hyphens).');
+      return;
+    }
+
+    // Complete sale; retain entered payment details when persistence fails.
+    const succeeded = onCompleteSale({
       items: cart,
       payment_method: paymentMethod,
       reference: paymentMethod === 'M-Pesa' ? mpesaReference.trim().toUpperCase() : undefined,
@@ -129,9 +139,15 @@ export const SellScreen: React.FC<SellScreenProps> = ({
       change: paymentMethod === 'Cash' ? cashChange : undefined,
     });
 
+    if (!succeeded) {
+      setErrorMessage('Transaction was not saved. Check the error and try again.');
+      return;
+    }
+
     // Reset local checkout states
     setCashTendered('');
     setMpesaReference('');
+    setPaymentConfirmed(false);
     setErrorMessage(null);
     setIsCartOpenMobile(false);
   };
@@ -563,21 +579,26 @@ export const SellScreen: React.FC<SellScreenProps> = ({
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-stone-300 flex items-center justify-between">
                   <span>M-Pesa Confirmation Code</span>
-                  <span className="text-[10px] text-stone-500">Optional / Manual</span>
+                  <span className="text-[10px] text-amber-400">Manual confirmation required</span>
                 </label>
                 <input
                   type="text"
                   value={mpesaReference}
                   onChange={e => {
                     setMpesaReference(e.target.value.toUpperCase());
+                    setPaymentConfirmed(false);
                     setErrorMessage(null);
                   }}
                   placeholder="e.g. QKH7189KL0"
                   className="w-full uppercase bg-stone-900 border border-stone-700 rounded-xl px-3.5 py-2.5 text-sm font-mono text-stone-100 placeholder:text-stone-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                 />
                 <p className="text-[10px] text-stone-500">
-                  Enter the code from the customer's M-Pesa SMS to print on their receipt.
+                  Check the business till statement or confirmation SMS. A typed code is not automatically verified.
                 </p>
+                <label className="flex items-start gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-3 text-xs text-stone-200 cursor-pointer">
+                  <input type="checkbox" checked={paymentConfirmed} onChange={e => setPaymentConfirmed(e.target.checked)} className="mt-0.5 accent-emerald-500" />
+                  <span>I have confirmed payment was received in the business M-Pesa till.</span>
+                </label>
               </div>
             )}
 

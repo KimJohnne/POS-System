@@ -34,7 +34,8 @@ export const SalesScreen: React.FC<SalesScreenProps> = ({
   onVoidSale,
 }) => {
   // Selected date in YYYY-MM-DD
-  const todayStr = new Date().toISOString().split('T')[0];
+  const kenyaDate = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  const todayStr = kenyaDate(new Date());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [searchQuery, setSearchQuery] = useState('');
   const [paymentFilter, setPaymentFilter] = useState<'All' | 'Cash' | 'M-Pesa'>('All');
@@ -52,20 +53,20 @@ export const SalesScreen: React.FC<SalesScreenProps> = ({
   const handleSetYesterday = () => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    setSelectedDate(kenyaDate(d));
   };
 
   // Filter sales for the selected date
   const dateSales = useMemo(() => {
     return sales.filter(s => {
-      const saleDate = s.ts.split('T')[0];
+      const saleDate = kenyaDate(new Date(s.ts));
       return saleDate === selectedDate;
     });
   }, [sales, selectedDate]);
 
   // Daily Reconciliation Metrics
   const dailyMetrics = useMemo(() => {
-    // Only count completed sales toward net till totals; voided reversals cancel out
+    // Cash movements are attributed to the day they occur, including later reversals.
     let totalRevenue = 0;
     let cashTotal = 0;
     let cashCount = 0;
@@ -77,8 +78,8 @@ export const SalesScreen: React.FC<SalesScreenProps> = ({
 
     dateSales.forEach(sale => {
       // Exclude reversing entries from transaction count if they are linked
-      if (sale.status === 'completed') {
-        completedCount++;
+      if (sale.status === 'completed' || (sale.status === 'voided' && !sale.voided_sale_id)) {
+        if (sale.status === 'completed') completedCount++;
         totalRevenue += sale.total;
         if (sale.payment_method === 'Cash') {
           cashTotal += sale.total;
@@ -88,8 +89,11 @@ export const SalesScreen: React.FC<SalesScreenProps> = ({
           mpesaCount++;
         }
       } else if (sale.status === 'voided') {
-        if (!sale.voided_sale_id) {
-          // This was the original completed sale that got voided
+        if (sale.voided_sale_id) {
+          totalRevenue += sale.total;
+          if (sale.payment_method === 'Cash') cashTotal += sale.total;
+          if (sale.payment_method === 'M-Pesa') mpesaTotal += sale.total;
+        } else {
           voidedCount++;
           refundedAmount += sale.total;
         }
