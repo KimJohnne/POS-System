@@ -198,6 +198,10 @@ export default function App() {
       alert('Cannot delete products with sales history. Set stock to zero instead.');
       return;
     }
+    if (products.some(p => p.id === productId && p.qty !== 0)) {
+      alert('Set stock to zero using a recorded correction before deleting.');
+      return;
+    }
     const updated = products.filter(p => p.id !== productId);
     saveProducts(updated);
     setProducts(updated);
