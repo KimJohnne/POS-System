@@ -54,7 +54,7 @@ export const WeeklyRevenueChart: React.FC<WeeklyRevenueChartProps> = ({
   // Generate 7 days for current week or last 7 days
   const weekData = useMemo(() => {
     const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today);
     const days: DayData[] = [];
 
     if (timeRange === 'current_week') {
@@ -68,7 +68,7 @@ export const WeeklyRevenueChart: React.FC<WeeklyRevenueChartProps> = ({
       for (let i = 0; i < 7; i++) {
         const d = new Date(monday);
         d.setDate(monday.getDate() + i);
-        const dateStr = d.toISOString().split('T')[0];
+        const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
         const dayShort = d.toLocaleDateString('en-GB', { weekday: 'short' });
         const dayNum = d.getDate();
 
@@ -94,7 +94,7 @@ export const WeeklyRevenueChart: React.FC<WeeklyRevenueChartProps> = ({
       for (let i = 6; i >= 0; i--) {
         const d = new Date(today);
         d.setDate(today.getDate() - i);
-        const dateStr = d.toISOString().split('T')[0];
+        const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
         const dayShort = d.toLocaleDateString('en-GB', { weekday: 'short' });
         const dayNum = d.getDate();
 
@@ -120,8 +120,8 @@ export const WeeklyRevenueChart: React.FC<WeeklyRevenueChartProps> = ({
     // Aggregate sales data per day
     sales.forEach(sale => {
       // Only include completed sales (excluding reversed or voided entries)
-      if (sale.status === 'completed') {
-        const saleDateStr = sale.ts.split('T')[0];
+      if (sale.status === 'completed' || sale.status === 'voided') {
+        const saleDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(sale.ts));
         const dayMatch = days.find(d => d.date === saleDateStr);
         if (dayMatch) {
           dayMatch.total += sale.total;
