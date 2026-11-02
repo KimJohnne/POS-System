@@ -1067,6 +1067,19 @@ export function importDatabaseBackup(input: string): { success: boolean; message
     }
     if (!Array.isArray(data.settings.categories) || typeof data.settings.shop_name !== 'string')
       throw new Error('Invalid settings.');
+    for (const adjustment of data.adjustments as StockAdjustment[]) {
+      if (!adjustment || !Number.isSafeInteger(adjustment.delta) || !adjustment.product_id ||
+          !adjustment.id || typeof adjustment.reason !== 'string' ||
+          typeof adjustment.created_at !== 'string') throw new Error('Invalid stock adjustment record.');
+    }
+    for (const sale of data.sales as Sale[]) {
+      if (!Number.isSafeInteger(sale.subtotal) || !Number.isFinite(Date.parse(sale.ts)) ||
+          sale.items.some(i => !i || !i.id || !i.product_id || !Number.isSafeInteger(i.qty) ||
+            !Number.isSafeInteger(i.price) || !Number.isSafeInteger(i.line_total) ||
+            i.sale_id !== sale.id || i.line_total !== i.price * i.qty) ||
+          sale.items.reduce((sum, i) => sum + i.line_total, 0) !== sale.total)
+        throw new Error('Invalid sale amounts or line items.');
+    }
     const snapshot: Snapshot = { version: 3, products: data.products, sales: data.sales,
       adjustments: data.adjustments,
       settings: { ...DEFAULT_SETTINGS, ...data.settings,
