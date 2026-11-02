@@ -49,6 +49,7 @@ export const SellScreen: React.FC<SellScreenProps> = ({
   const [mpesaReference, setMpesaReference] = useState<string>('');
   const [isCartOpenMobile, setIsCartOpenMobile] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
 
   // Categories list including 'All'
   const categories = useMemo(() => {
@@ -120,6 +121,10 @@ export const SellScreen: React.FC<SellScreenProps> = ({
       }
     }
 
+    if (paymentMethod === 'M-Pesa' && !paymentConfirmed) {
+      setErrorMessage('Confirm receipt of the M-Pesa payment before recording this sale.');
+      return;
+    }
     if (paymentMethod === 'M-Pesa' && !/^[A-Z0-9-]{6,32}$/.test(mpesaReference.trim().toUpperCase())) {
       setErrorMessage('Enter the confirmed M-Pesa reference (6–32 letters, digits or hyphens).');
       return;
@@ -142,6 +147,7 @@ export const SellScreen: React.FC<SellScreenProps> = ({
     // Reset local checkout states
     setCashTendered('');
     setMpesaReference('');
+    setPaymentConfirmed(false);
     setErrorMessage(null);
     setIsCartOpenMobile(false);
   };
@@ -578,6 +584,7 @@ export const SellScreen: React.FC<SellScreenProps> = ({
                 <input
                   type="text"
                   value={mpesaReference}
+                  onBlur={() => setPaymentConfirmed(false)}
                   onChange={e => {
                     setMpesaReference(e.target.value.toUpperCase());
                     setErrorMessage(null);
