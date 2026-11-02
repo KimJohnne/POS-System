@@ -9,6 +9,7 @@ import {
   initStorage,
   getProducts,
   saveProducts,
+  saveCatalogProduct,
   getStockAdjustments,
   recordStockAdjustment,
   getSales,
@@ -69,9 +70,9 @@ export default function App() {
   ).length;
 
   // Today sales count
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const todaySalesCount = sales.filter(
-    s => s.ts.split('T')[0] === todayStr && s.status === 'completed'
+    s => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(s.ts)) === todayStr && s.status === 'completed'
   ).length;
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.qty, 0);
@@ -127,14 +128,16 @@ export default function App() {
     reference?: string;
     cash_received?: number;
     change?: number;
-  }) => {
+  }): boolean => {
     try {
       const newSale = completeSale(payload);
       refreshAllData();
       setCart([]);
       setViewingReceipt(newSale); // Automatically opens receipt modal
+      return true;
     } catch (err) {
       alert(`Sale failed: ${(err as Error).message}`);
+      return false;
     }
   };
 
@@ -185,11 +188,16 @@ export default function App() {
       prods.unshift(newProd);
     }
 
-    saveProducts(prods);
-    setProducts(prods);
+    const changed = prods.find(p => p.id === (prodData.id || '')) || prods[0];
+    saveCatalogProduct(changed);
+    refreshAllData();
   };
 
   const handleDeleteProduct = (productId: string) => {
+    if (sales.some(s => s.items.some(i => i.product_id === productId))) {
+      alert('Cannot delete products with sales history. Set stock to zero instead.');
+      return;
+    }
     const updated = products.filter(p => p.id !== productId);
     saveProducts(updated);
     setProducts(updated);
