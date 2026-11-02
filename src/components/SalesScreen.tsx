@@ -78,8 +78,8 @@ export const SalesScreen: React.FC<SalesScreenProps> = ({
 
     dateSales.forEach(sale => {
       // Exclude reversing entries from transaction count if they are linked
-      if (sale.status === 'completed') {
-        completedCount++;
+      if (sale.status === 'completed' || (sale.status === 'voided' && !sale.voided_sale_id)) {
+        if (sale.status === 'completed') completedCount++;
         totalRevenue += sale.total;
         if (sale.payment_method === 'Cash') {
           cashTotal += sale.total;
@@ -94,7 +94,6 @@ export const SalesScreen: React.FC<SalesScreenProps> = ({
           if (sale.payment_method === 'Cash') cashTotal += sale.total;
           if (sale.payment_method === 'M-Pesa') mpesaTotal += sale.total;
         } else {
-          // This was the original completed sale that got voided
           voidedCount++;
           refundedAmount += sale.total;
         }
